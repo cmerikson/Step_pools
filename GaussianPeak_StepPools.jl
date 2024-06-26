@@ -31,7 +31,7 @@ k = (2*pi)/λ # Wavenumber
 β = (λ*κ^2.0)/(r_0)
 ψ = λ / r_0
 
-function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge, timestep, simtime)
+function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Float64, timestep::Float64, simtime::Float64)
     q_w = Discharge # Discharge per width
     
     @parameters x, t
@@ -94,12 +94,12 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge, time
     @assert size(discη) == (rows, cols)
     
     # Create vectors for each matrix
-    discu_vec = vec(discu)
-    discη_vec = vec(discη)
+    discu_vec = vec(discu')
+    discη_vec = vec(discη')
     
     # Create additional columns for time slices and spatial indices
-    time_slices = repeat(range(0, stop=50, length=cols), inner=rows)
-    spatial_indices = repeat(range(0, stop=3, length=rows), outer=cols)
+    time_slices = repeat(range(0.0, stop=50.0, length=cols), outer=rows)
+    spatial_indices = repeat(range(0.0, stop=3.0, length=rows), inner=cols)
     
     discr = (1.0 - D/r_0).*exp.((-(discx .- Peak1).^2.0)./0.1) .+ (1.0 + D/r_0) .+ ((1.0 - D/r_0).*exp.((-(discx .- Peak2).^2.0)./0.1) .+ (1.0 + D/r_0) .+ (1.0 - D/r_0))
     
@@ -112,14 +112,14 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge, time
         u = discu_vec,
         η = discη_vec,
         roughness = roughness,
-    ) 
+    )
     return df
 end
 
-function run_simulations(peaks::Vector{Tuple{Float64, Float64}}, Discharge, timestep, simtime)
+function run_simulations(peaks::Vector{Tuple{Float64, Float64}}, Discharge::Float64, timestep::Float64, simtime::Float64)
     results = []
     for (Peak1, Peak2) in peaks
-        df = Gaussian_DualPeak_Model(Peak1, Peak2, timestep, simtime)
+        df = Gaussian_DualPeak_Model(Peak1, Peak2, Discharge, timestep, simtime)
         df[:, :Peak1] .= Peak1
         df[:, :Peak2] .= Peak2
         push!(results, df)
@@ -130,7 +130,8 @@ end
 peaks = [(0.5, 2.5), (1.0, 2.0), (1.25, 1.75)]
 timestep = 0.001
 simtime = 50.0
+Discharge = 50.0
 
-simulation_results = run_simulations(peaks, 50.0, timestep, simtime)
+simulation_results = run_simulations(peaks, Discharge, timestep, simtime)
 
 CSV.write("Gaussian_Results.csv", simulation_results)
