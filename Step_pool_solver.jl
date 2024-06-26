@@ -1,4 +1,4 @@
-using Printf, ModelingToolkit, DomainSets, DifferentialEquations, MethodOfLines, Plots
+using Printf, ModelingToolkit, DomainSets, DifferentialEquations, MethodOfLines, Plots, LaTeXStrings
 
 # Function to convert a number to scientific notation with 10^power format
 function scientific_notation(value)
@@ -15,9 +15,7 @@ end
 τ_cr = 0.05 # Critical Shields Number
 g = 9.81 # Gravitational Acceleration m/s^2
 κ = 0.41 # Von Karman constant
-#ξ = 0.05 # Near-bed fraction
-q_w = 20 # Discharge per width
-#A = 0.5 # Roughness Amplitude
+q_w = 30 # Discharge per width
 r_0 = 0.5 # Immobile Clast Radius
 D = 0.25 # Mobile Layer Grain Size
 D_min = 0.25
@@ -45,13 +43,13 @@ Dt = Differential(t)
 # Periodic Roughness
 r = (1-(D_min/r_0))*cos(2.0*pi*x) + (1+(D_min/r_0))
 
-# Term inside the Logarithm set to zero when z/z_0 <= 1
-#log_term = ((ζ / (u(x, t) * r)) > 1) * (log(ζ / (exp(1)*u(x, t) * r)))
+# Term inside the Logarithm
 log_term = (log(ζ / (exp(1)*u(x, t) * r)))
 
-# Equation (9)
+# Fluid Momentum
 eq1 = ζ * u(x,t) * Dx(u(x,t)) ~ -ζ * expand_derivatives(Dx(1/u(x,t))) - Dx(η(x,t)) - β*u(x,t)^3.0 * (1.0 - ((2/ζ) * u(x,t) * r) + ((1/ζ^(2.0)) * u(x,t)^(2.0) * r^(2.0))) * ((log_term + ((1/ζ) * u(x,t) * r))^(-2.0)) + ψ*tan(θ)
-# Equation (10)
+
+# Mass Conservation
 log_dx = Dx((α * u(x,t)^2.0) * (1 - ((2/ζ) * u(x,t) * r) + ((1/ζ^(2.0)) * u(x,t)^(2.0) * r^(2.0))) * (log_term + ((1/ζ) * u(x,t) * r))^(-2.0) - τ_cr)
 eq2B = -expand_derivatives(log_dx^γ) * (1/α)
 τ = ((α*u(x,t)^2.0) * (1 - ((2/ζ) * u(x,t) * r) + ((1/ζ^(2.0)) * u(x,t)^(2.0) * r^(2.0))) * (log_term + (u(x,t)*r / ζ))^(-2.0))
@@ -80,20 +78,19 @@ bcs = [η(x, 0.0) ~ η0(x, 0.0),
 @named pdesys = PDESystem(eq, bcs, domains, [x, t], [u(x, t), η(x, t)])
 
 # Finite Difference Method
-discretization = MOLFiniteDifference([x => 1000], t)
+discretization = MOLFiniteDifference([x => 100], t)
 
 # Define the differential equations problem
 prob = discretize(pdesys, discretization);
 
 # Solve PDE system
-sol1 = solve(prob, Rosenbrock23(), saveat = 1, maxiters=1e5)
+sol1 = solve(prob, Rosenbrock23(), saveat = 0.1, maxiters=1e5)
 
 disct = sol1[t]
 discx = sol1[x]
 discu = sol1[u(x,t)]
 discη = sol1[η(x,t)]
 
-using Plots, LaTeXStrings
 anim = @animate for i in 1:length(disct)
     η = discη[:, i]
     format_time = scientific_notation(disct[i])
