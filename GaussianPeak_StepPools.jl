@@ -11,12 +11,20 @@ function scientific_notation(value)
     end
 end
 
-# Function to creat animation from simulation results
-function create_animations(df::DataFrame, peaks::Tuple{Float64, Float64})
-    FilteredData = filter(row -> row.Peak1 == peaks[1] && row.Peak2 == peaks[2], df)
+# Function to create animation from simulation results
+function create_animations(df::DataFrame, peaks::Tuple{Float64, Float64, Union{Nothing, Float64}})
+    println("Creating animation for peaks: $peaks")
+    FilteredData = filter(row -> row.Peak1 == peaks[1] && row.Peak2 == peaks[2] &&
+                          (peaks[3] === nothing ? row.Peak3 === NaN : row.Peak3 == peaks[3]), df)
+    println("Filtered data has $(nrow(FilteredData)) rows")
+
+    if nrow(FilteredData) == 0
+        println("No data available for peaks: $peaks")
+        return nothing
+    end
+
     anim = @animate for time in unique(FilteredData.t)
         Data = filter(row -> row.t == time, FilteredData)
-        #format_time = scientific_notation(Data.t)
         
         p1 = plot(Data.x, Data.η, ylim=(-1,1), color="#9d162e", title=latexstring("\$t^*\$ = $(time)"), xlabel=latexstring("Dimensionless Distance, \$x^*\$"), ylabel=latexstring("Dimensionless Elevation, \$η^{*}(x^*,t^*)\$"), label="Elevation")
         hline!([0.0], linestyle=:dash, color="gray", label="")
@@ -34,7 +42,6 @@ g = 9.81 # Gravitational Acceleration m/s^2
 κ = 0.41 # Von Karman constant
 r_0 = 0.5 # Immobile Clast Radius
 D = 0.25 # Mobile Layer Grain Size
-D_min = 0.25
 λ = 30 # Roughness patch spacing
 k = (2*pi)/λ # Wavenumber
 ρ_s = 2650 # Sediment density
@@ -51,7 +58,7 @@ function compute_dimensionless(q_w)
 end
 
 # Numerical Solver
-function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Float64, timestep::Float64, simtime::Float64)
+function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Float64, timestep::Float64, simtime::Float64, Peak3::Union{Nothing, Float64}=nothing)
     q_w = Discharge # Discharge per width
 
     ζ, α, β, ψ = compute_dimensionless(q_w)
@@ -67,8 +74,13 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
     # Gaussian Peaked Roughness
     peak1 = (1.0 - D/r_0)*exp((-(x - Peak1)^2.0)/0.1) + (1.0 + D/r_0)
     peak2 = (1.0 - D/r_0)*exp((-(x - Peak2)^2.0)/0.1) + (1.0 + D/r_0)
-
-    r = peak1 + peak2
+    
+    if Peak3 !== nothing
+        peak3 = (1.0 - D/r_0)*exp((-(x - Peak3)^2.0)/0.1) + (1.0 + D/r_0)
+        r = peak1 + peak2 + peak3
+    else
+        r = peak1 + peak2
+    end
 
     log_term = (log(ζ / (exp(1)*u(x, t) * r)))
 
@@ -120,10 +132,13 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
     discη_vec = vec(discη')
     
     # Create additional columns for time slices and spatial indices
-    time_slices = repeat(range(0.0, stop=50.0, length=cols), outer=rows)
+    time_slices = repeat(range(0.0, stop=simtime, length=cols), outer=rows)
     spatial_indices = repeat(range(0.0, stop=3.0, length=rows), inner=cols)
     
-    discr = (1.0 - D/r_0).*exp.((-(discx .- Peak1).^2.0)./0.1) .+ (1.0 + D/r_0) .+ ((1.0 - D/r_0).*exp.((-(discx .- Peak2).^2.0)./0.1) .+ (1.0 + D/r_0) .+ (1.0 - D/r_0))
+    discr = (1.0 - D/r_0).*exp.((-(discx .- Peak1).^2.0)./0.1) .+ (1.0 + D/r_0) .+ ((1.0 - D/r_0).*exp.((-(discx .- Peak2).^2.0)./0.1) .+ (1.0 + D/r_0))
+    if Peak3 !== nothing
+        discr .+= ((1.0 - D/r_0).*exp.((-(discx .- Peak3).^2.0)./0.1) .+ (1.0 + D/r_0))
+    end
     
     roughness = repeat(discr, inner=cols)
     
@@ -134,21 +149,30 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
         η = discη_vec,
         roughness = roughness,
     )
+    df[:, :Peak1].=Peak1
+    df[:, :Peak2].=Peak2
+    df[:, :Peak3] .= Peak3 === nothing ? NaN : Peak3
+ 
     return df
 end
 
-function run_simulations(peaks::Vector{Tuple{Float64, Float64}}, Discharge::Float64, timestep::Float64, simtime::Float64)
-    results = []
-    for (Peak1, Peak2) in peaks
-        df = Gaussian_DualPeak_Model(Peak1, Peak2, Discharge, timestep, simtime)
-        df[:, :Peak1] .= Peak1
-        df[:, :Peak2] .= Peak2
-        push!(results, df)
-    end
+function run_simulations(peaks::Vector{Tuple{Float64, Float64, Union{Nothing, Float64}}}, Discharge::Float64, timestep::Float64, simtime::Float64)
+    results = [Gaussian_DualPeak_Model(Peak1, Peak2, Discharge, timestep, simtime, Peak3) for (Peak1, Peak2, Peak3) in peaks]
     return vcat(results...)
 end
 
-peaks = [(0.0,3.0), (0.5, 2.5), (1.0, 2.0), (1.25, 1.75)]
+peaks = [
+    (0.0, 3.0, nothing),
+    (0.5, 2.5, nothing),
+    (1.0, 2.0, nothing),
+    (1.25, 1.75, nothing),
+    (0.5, 1.5, 2.5),
+    (0.5, 1.0, 2.5)
+]
+
+# Convert peaks to the correct type
+peaks = Vector{Tuple{Float64, Float64, Union{Nothing, Float64}}}(peaks)
+
 timestep = 0.1
 simtime = 50.0
 Discharge = 50.0
@@ -159,6 +183,5 @@ CSV.write("Gaussian_Results.csv", simulation_results)
 
 for i in peaks
     anim = create_animations(simulation_results, i)
-    gif(anim, "simulation_results_$(i)peak.gif", fps=30)
+    gif(anim, "simulation_results_$(i[1])_$(i[2])_$(i[3] === nothing ? "none" : string(i[3]))_peak.gif", fps=30)
 end
-
