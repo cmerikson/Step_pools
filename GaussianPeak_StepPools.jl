@@ -11,6 +11,23 @@ function scientific_notation(value)
     end
 end
 
+# Function to creat animation from simulation results
+function create_animations(df::DataFrame, peaks::Tuple{Float64, Float64})
+    FilteredData = filter(row -> row.Peak1 == peaks[1] && row.Peak2 == peaks[2], df)
+    anim = @animate for time in unique(FilteredData.t)
+        Data = filter(row -> row.t == time, FilteredData)
+        #format_time = scientific_notation(Data.t)
+        
+        p1 = plot(Data.x, Data.η, ylim=(-1,1), color="#9d162e", title=latexstring("\$t^*\$ = $(time)"), xlabel=latexstring("Dimensionless Distance, \$x^*\$"), ylabel=latexstring("Dimensionless Elevation, \$η^{*}(x^*,t^*)\$"), label="Elevation")
+        hline!([0.0], linestyle=:dash, color="gray", label="")
+        p2 = plot(Data.x, Data.u, ylim=(0.5,0.8), color="#003c73", title=latexstring("\$t^*\$ = $(time)"), xlabel=latexstring("Dimensionless Distance, \$x^*\$"), ylabel=latexstring("Dimensionless Velocity, \$u^{*}(x^*,t^*)\$"), label="Velocity")
+        plot!(twinx(), Data.x, Data.roughness, ylim=(2,7), yticks=[], color="black", label="Roughness")
+        
+        plot(p1, p2, layout=(2, 1), size=(800, 600))
+    end
+    return anim
+end
+
 # Constants
 τ_cr = 0.05 # Critical Shields Number
 g = 9.81 # Gravitational Acceleration m/s^2
@@ -25,14 +42,19 @@ k = (2*pi)/λ # Wavenumber
 θ = 0.04996 # Angle of slope in radians (7% 0.06989)
 γ = 1
 
-# Dimensionless Parameters
-ζ = (q_w^(2.0/3.0))/((g^(1.0/3.0))*r_0)
-α = (ρ*(g*q_w)^(2.0/3.0) * κ^2.0) / ((ρ_s - ρ)*g*D)
-β = (λ*κ^2.0)/(r_0)
-ψ = λ / r_0
+function compute_dimensionless(q_w)
+    ζ = (q_w^(2.0/3.0))/((g^(1.0/3.0))*r_0)
+    α = (ρ*(g*q_w)^(2.0/3.0) * κ^2.0) / ((ρ_s - ρ)*g*D)
+    β = (λ*κ^2.0)/(r_0)
+    ψ = λ / r_0
+    return ζ, α, β, ψ
+end
 
+# Numerical Solver
 function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Float64, timestep::Float64, simtime::Float64)
     q_w = Discharge # Discharge per width
+
+    ζ, α, β, ψ = compute_dimensionless(q_w)
     
     @parameters x, t
     @variables u(..) [bounds=(0,Inf)]
@@ -103,9 +125,8 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
     
     discr = (1.0 - D/r_0).*exp.((-(discx .- Peak1).^2.0)./0.1) .+ (1.0 + D/r_0) .+ ((1.0 - D/r_0).*exp.((-(discx .- Peak2).^2.0)./0.1) .+ (1.0 + D/r_0) .+ (1.0 - D/r_0))
     
-    roughness = repeat(discr, outer=cols)
+    roughness = repeat(discr, inner=cols)
     
-    # Combine everything into a DataFrame
     df = DataFrame(
         t = time_slices,
         x = spatial_indices,
@@ -127,11 +148,17 @@ function run_simulations(peaks::Vector{Tuple{Float64, Float64}}, Discharge::Floa
     return vcat(results...)
 end
 
-peaks = [(0.5, 2.5), (1.0, 2.0), (1.25, 1.75)]
-timestep = 0.001
+peaks = [(0.0,3.0), (0.5, 2.5), (1.0, 2.0), (1.25, 1.75)]
+timestep = 0.1
 simtime = 50.0
 Discharge = 50.0
 
 simulation_results = run_simulations(peaks, Discharge, timestep, simtime)
 
 CSV.write("Gaussian_Results.csv", simulation_results)
+
+for i in peaks
+    anim = create_animations(simulation_results, i)
+    gif(anim, "simulation_results_$(i)peak.gif", fps=30)
+end
+
