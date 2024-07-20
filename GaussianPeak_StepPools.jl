@@ -1,4 +1,4 @@
-using DifferentialEquations, DomainSets, ModelingToolkit, MethodOfLines, Printf, Plots, LaTeXStrings, DataFrames, CSV
+using DifferentialEquations, DomainSets, ModelingToolkit, MethodOfLines, Printf, Plots, LaTeXStrings, DataFrames, CSV, Symbolics, NonlinearSolve, StatsBase, NaNMath
 
 # Function to convert a number to scientific notation with 10^power format
 function scientific_notation(value)
@@ -46,7 +46,7 @@ D = 0.25 # Mobile Layer Grain Size
 k = (2*pi)/λ # Wavenumber
 ρ_s = 2650 # Sediment density
 ρ = 1000 # Fluid density
-θ = 0.04996 # Angle of slope in radians (7% 0.06989)
+θ = 0.06989 # Angle of slope in radians (7% 0.06989 5% 0.04996)
 γ = 1
 
 function compute_dimensionless(q_w)
@@ -58,7 +58,7 @@ function compute_dimensionless(q_w)
 end
 
 # Numerical Solver
-function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Float64, timestep::Float64, simtime::Float64, Peak3::Union{Nothing, Float64}=nothing)
+function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Float64, timestep::Float64, simtime::Float64, Peak3::Union{Nothing, Float64}=nothing, Bankfull::Bool=false)
     q_w = Discharge # Discharge per width
 
     ζ, α, β, ψ = compute_dimensionless(q_w)
@@ -82,7 +82,7 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
         r = peak1 + peak2
     end
 
-    log_term = (log(ζ / (exp(1)*u(x, t) * r)))
+    log_term = (NaNMath.log(ζ / (exp(1)*u(x, t) * r)))
 
     eq1 = ζ * u(x,t) * Dx(u(x,t)) ~ -ζ * expand_derivatives(Dx(1/u(x,t))) - Dx(η(x,t)) - β*u(x,t)^3.0 * (1.0 - ((2/ζ) * u(x,t) * r) + ((1/ζ^(2.0)) * u(x,t)^(2.0) * r^(2.0))) * ((log_term + ((1/ζ) * u(x,t) * r))^(-2.0)) + ψ*tan(θ)
     
@@ -103,7 +103,7 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
     
     # Periodic Boundary Conditions
     η0(x, t) = 0.0
-    u0(x, t) = 2.0
+    u0(x, t) = 0.2
     
     bcs = [η(x, 0.0) ~ η0(x, 0.0),
             η(x_start, t) ~ η(x_end, t),
@@ -141,14 +141,45 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
     end
     
     roughness = repeat(discr, inner=cols)
-    
-    df = DataFrame(
+
+    τ_values = [Symbolics.value(substitute(τ, Dict(x => i, t => j, u(x, t) => k))) for (i, j, k) in zip(spatial_indices, time_slices, discu_vec)]
+
+    function calculate_bankfull(τ_cr::Float64)
+
+        f(u,r) = Symbolics.value(α) .* u .* u .* (1 .- (2 .* u .* r ./ Symbolics.value(ζ)) .+ (u .* u .* r.^2 ./ Symbolics.value(ζ).^2)) .* ((NaNMath.log.(Symbolics.value(ζ) ./ (exp(1) .* u .* r))) .+ (u .* r ./ Symbolics.value(ζ))).^(-2.0) .- τ_cr
+        
+        u0 = repeat([1.0],length(discr))
+
+        problem = NonlinearProblem(f, u0, discr)
+        sol = solve(problem)
+        mean_u = geomean(sol.u)
+        return mean_u
+    end
+
+    if Bankfull
+        bankfull_u = calculate_bankfull(τ_cr)
+        df = DataFrame(
         t = time_slices,
         x = spatial_indices,
         u = discu_vec,
         η = discη_vec,
         roughness = roughness,
-    )
+        tau = τ_values,
+        q = q_w,
+        bankfull = repeat([bankfull_u], length(time_slices))
+        )
+    else
+        df = DataFrame(
+        t = time_slices,
+        x = spatial_indices,
+        u = discu_vec,
+        η = discη_vec,
+        roughness = roughness,
+        tau = τ_values,
+        q = q_w
+        )
+    end
+    
     df[:, :Peak1].=Peak1
     df[:, :Peak2].=Peak2
     df[:, :Peak3] .= Peak3 === nothing ? NaN : Peak3
@@ -161,27 +192,9 @@ function run_simulations(peaks::Vector{Tuple{Float64, Float64, Union{Nothing, Fl
     return vcat(results...)
 end
 
-peaks = [
-    (0.0, 3.0, nothing),
-    (0.5, 2.5, nothing),
-    (1.0, 2.0, nothing),
-    (1.25, 1.75, nothing),
-    (0.5, 1.5, 2.5),
-    (0.5, 1.0, 2.5)
-]
-
-# Convert peaks to the correct type
-peaks = Vector{Tuple{Float64, Float64, Union{Nothing, Float64}}}(peaks)
-
-timestep = 0.1
-simtime = 50.0
-Discharge = 50.0
-
-simulation_results = run_simulations(peaks, Discharge, timestep, simtime)
-
-CSV.write("Gaussian_Results.csv", simulation_results)
-
-for i in peaks
-    anim = create_animations(simulation_results, i)
-    gif(anim, "simulation_results_$(i[1])_$(i[2])_$(i[3] === nothing ? "none" : string(i[3]))_peak.gif", fps=30)
+function create_animations(simulation_results, output_directory)
+    for i in peaks
+        anim = create_animations(simulation_results, i)
+        gif(anim, string(output_directory,"/simulation_results_$(i[1])_$(i[2])_$(i[3] === nothing ? "none" : string(i[3]))_peak.gif"), fps=30)
+    end
 end
