@@ -1,4 +1,4 @@
-using DifferentialEquations, DomainSets, ModelingToolkit, MethodOfLines, Printf, Plots, LaTeXStrings, DataFrames, CSV, Symbolics, NonlinearSolve, StatsBase, NaNMath, ColorSchemes, ProgressLogging
+using DifferentialEquations, DomainSets, ModelingToolkit, MethodOfLines, Printf, Plots, LaTeXStrings, DataFrames, CSV, Symbolics, NonlinearSolve, StatsBase, NaNMath, ColorSchemes
 
 # Function to convert a number to scientific notation with 10^power format
 function scientific_notation(value)
@@ -29,7 +29,7 @@ function PlotEvolution(disct, discx, discη, roughness, simulation_time, time_st
     return p
 end
 
-function PlotFrame(df::DataFrame, simulation_time; ybounds=[2,11], variable="elevation")
+function PlotFrame(df::DataFrame; ybounds=[2,11], xbounds=[0,5], variable="elevation")
     colors = [get(ColorSchemes.oslo, i / 4) for i in 0:3]
 
     a = filter(row -> row.t == minimum(df.t),df)
@@ -38,7 +38,7 @@ function PlotFrame(df::DataFrame, simulation_time; ybounds=[2,11], variable="ele
     d = filter(row -> row.t == maximum(df.t),df)
     if variable == "elevation"
         # Initial Bed surface
-        plot(a.x, a.η, xlim=(0,20), ylim=(-1,1), title=latexstring("\$η^*\$ Evolution", ), 
+        plot(a.x, a.η, xlim=(xbounds[1],xbounds[2]), ylim=(-1,1), title=latexstring("\$η^*\$ Evolution", ), 
         color=colors[4], xlabel=latexstring("Dimensionless Distance, \$x^*\$"), ylabel=latexstring("Dimensionless Elevation, \$η^{*}(x^*,t^*)\$"),
         label=latexstring("\$t^{*} = 0\$"), linestyle=:dash, legend=:topleft)
         plot!(twiny(), xticks=false)
@@ -50,7 +50,7 @@ function PlotFrame(df::DataFrame, simulation_time; ybounds=[2,11], variable="ele
         return p
     elseif variable == "velocity"
          # Initial Bed surface
-         plot(a.x, a.u, xlim=(0,20), ylim=(0,2), title=latexstring("\$u^*\$ Evolution", ), 
+         plot(a.x, a.u, xlim=(xbounds[1],xbounds[2]), ylim=(0,2), title=latexstring("\$u^*\$ Evolution", ), 
          color=colors[4], xlabel=latexstring("Dimensionless Distance, \$x^*\$"), ylabel=latexstring("Dimensionless Velocity, \$u^{*}(x^*,t^*)\$"),
          label=latexstring("\$t^{*} = 0\$"), linestyle=:dash, legend=:topleft)
          plot!(twiny(), xticks=false)
@@ -66,26 +66,22 @@ function PlotFrame(df::DataFrame, simulation_time; ybounds=[2,11], variable="ele
 end
 
 # Function to create animation from simulation results
-function create_animations(df::DataFrame, peaks::Tuple{Float64, Float64, Union{Nothing, Float64}})
-    println("Creating animation for peaks: $peaks")
-    FilteredData = filter(row -> row.Peak1 == peaks[1] && row.Peak2 == peaks[2] &&
-                          (peaks[3] === nothing ? row.Peak3 === NaN : row.Peak3 == peaks[3]), df)
-    println("Filtered data has $(nrow(FilteredData)) rows")
-
-    if nrow(FilteredData) == 0
-        println("No data available for peaks: $peaks")
-        return nothing
-    end
-
+function create_animations(df::DataFrame; Option::String="Elevation")
+    println("Creating animation")
+    FilteredData = df
+    
     anim = @animate for time in unique(FilteredData.t)
         Data = filter(row -> row.t == time, FilteredData)
         
-        p1 = plot(Data.x, Data.η, ylim=(-1,1), color="#9d162e", title=latexstring("\$t^*\$ = $(time)"), xlabel=latexstring("Dimensionless Distance, \$x^*\$"), ylabel=latexstring("Dimensionless Elevation, \$η^{*}(x^*,t^*)\$"), label="Elevation")
+        p1 = plot(Data.x, Data.η, ylim=(-0.75,0.75), color="#9d162e", title=latexstring("\$t^*\$ = $(time)"), xlabel=latexstring("Dimensionless Distance, \$x^*\$"), ylabel=latexstring("Dimensionless Elevation, \$η^{*}(x^*,t^*)\$"), label="Elevation")
         hline!([0.0], linestyle=:dash, color="gray", label="")
-        p2 = plot(Data.x, Data.u, ylim=(0.5,0.8), color="#003c73", title=latexstring("\$t^*\$ = $(time)"), xlabel=latexstring("Dimensionless Distance, \$x^*\$"), ylabel=latexstring("Dimensionless Velocity, \$u^{*}(x^*,t^*)\$"), label="Velocity")
-        plot!(twinx(), Data.x, Data.roughness, ylim=(2,7), yticks=[], color="black", label="Roughness")
-        
-        plot(p1, p2, layout=(2, 1), size=(800, 600))
+
+        if Option == "Velocity"
+            p2 = plot(Data.x, Data.u, ylim=(0.5,0.8), color="#003c73", title=latexstring("\$t^*\$ = $(time)"), xlabel=latexstring("Dimensionless Distance, \$x^*\$"), ylabel=latexstring("Dimensionless Velocity, \$u^{*}(x^*,t^*)\$"), label="Velocity")
+            plot!(twinx(), Data.x, Data.roughness, ylim=(2,7), yticks=[], color="black", label="Roughness")
+            
+            plot(p1, p2, layout=(2, 1), size=(800, 600))
+        end
     end
     return anim
 end
@@ -95,7 +91,6 @@ g = 9.81 # Gravitational Acceleration m/s^2
 κ = 0.41 # Von Karman constant
 ρ_s = 2650 # Sediment density
 ρ = 1000 # Fluid density
-γ = 1.5
 
 # Reference angle of slope in radians (10% 0.09967, 8% 0.07983, 7% 0.06989 5% 0.04996)
 
@@ -117,6 +112,10 @@ end
 
 function TuneTurbulence(D::Float64; Factor::Float64=3.0)
     return (30/(Factor*D))*D
+end
+
+function CriticalShields(slope::Float64)
+    return 0.15 * slope^0.25
 end
 
 function ComputeStress(u, r, α, ζ, ν)
@@ -141,7 +140,7 @@ function equilibrium_u0!(f, u, p::Parameters)
     + ((p.r0/p.ν) * (p.ν - ((1+p.ν) * log(1.0 + p.ν)) 
     + log(1.0 + ((p.ν*p.ζ)/(u0*p.r0))))) )^(2.0))
 
-    f[1] = p.β * F - p.ψ * tan(p.θ)
+    f[1] = p.β * F - p.ψ * sin(p.θ)
 end
 
 """
@@ -169,17 +168,22 @@ end
 # Numerical Solver
 function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Float64, Roughness_Scale::Float64, Length_Scale::Float64,
      D50::Float64, Slope::Float64, timestep::Float64, simtime::Float64, ν::Float64; 
-     Peak3::Union{Nothing, Float64}=nothing, u_init::Float64=1.0, τ_cr::Float64=0.05, σ::Float64=0.05, A::Float64=2.0,
-     Reference::String=nothing, figure::Bool=false, flat::Bool=false, k::Float64=3.0)
+     Peak3::Union{Nothing, Float64}=nothing, Peak4::Union{Nothing, Float64}=nothing, Peak5::Union{Nothing, Float64}=nothing,
+    u_init::Float64=1.0, τ_cr::Union{Nothing, Float64}=nothing, σ::Float64=0.05, A::Float64=2.0,
+     Reference::String=nothing, figure::Bool=false, flat::Bool=false, k::Float64=3.0, transport_intesity::Float64=1.5, domain::Float64=10.0, nodes::Int64=250)
 
     q_w = Discharge # Discharge per width
-    θ = Slope
+    θ = atan(Slope)
     r_0 = Roughness_Scale
     D = D50
     λ = Length_Scale
-    τ_cr = τ_cr # Critical Shields Number
+    γ = transport_intesity
 
-    c = u_init + sqrt(q_w / u_init)
+    if isnothing(τ_cr)
+        τ_cr = CriticalShields(Slope)
+    end
+
+    c = (u_init) + (sqrt(g * q_w / (u_init*(g*q_w)^(1/3)))/(g*q_w)^(1/3))
 
     ζ, α, β, ψ = compute_dimensionless(q_w,λ,r_0,D)
     
@@ -193,33 +197,45 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
     
     # Gaussian Peaked Roughness
     if !flat
-        peak1 = (A/r_0)*exp((-(x - Peak1)^2.0)/σ)
-        peak2 = (A/r_0)*exp((-(x - Peak2)^2.0)/σ)
+        peak1 = (A/r_0)*exp((-(x - Peak1)^2.0)/(2*σ^2.0))
+        peak2 = (A/r_0)*exp((-(x - Peak2)^2.0)/(2*σ^2.0))
     
         if Peak3 !== nothing
-            peak3 = (A/r_0)*exp((-(x - Peak3)^2.0)/σ)
-            r = gau = (peak1 + peak2 + peak3 + (k*D/r_0))
+            peak3 = (A/r_0)*exp((-(x - Peak3)^2.0)/(2*σ^2.0))
+            r = (peak1 + peak2 + peak3 + (k*D/r_0))
+            if Peak4 !== nothing
+                peak4 = (A/r_0)*exp((-(x - Peak4)^2.0)/(2*(σ*0.8)^2.0))
+                r = (peak1 + peak2 + peak3 + peak4 + (k*D/r_0))
+            end
+            if Peak5 !== nothing
+                peak5 = (A/r_0)*exp((-(x - Peak5)^2.0)/(2*(σ*0.8)^2.0))
+                r = (peak1 + peak2 + peak3 + peak4 + peak5 + (k*D/r_0))
+            end
         else
-            r = gau = (peak1 + peak2 + (k*D/r_0))
+            r = (peak1 + peak2 + (k*D/r_0))
         end
     else
         r = D/r_0
     end
 
-    eq1 = ζ * u(x,t) * Dx(u(x,t)) ~ -ζ * expand_derivatives(Dx(1/u(x,t))) - Dx(η(x,t)) - ((β*u(x,t)^3.0 * ( (ζ^2 / (u(x,t))^2) - ((2.0 * r * ζ)/u(x,t)) + (r^(2.0)))) / ( ((ζ/u(x,t))*(NaNMath.log(1 + ((ν*ζ)/(u(x,t) * r))) - 1.0)) + ((r/ν) * (ν - ((1+ν) * NaNMath.log(1 + ν)) + NaNMath.log(1 + ((ν*ζ)/(u(x,t)*r))))) )^(2.0)) + ψ*tan(θ)
+    eq1 = ζ * u(x,t) * Dx(u(x,t)) ~ -ζ * expand_derivatives(Dx(1/u(x,t))) - Dx(η(x,t)) - ((β*u(x,t)^3.0 * ( (ζ^2 / (u(x,t))^2) - ((2.0 * r * ζ)/u(x,t)) + (r^(2.0)))) / ( ((ζ/u(x,t))*(NaNMath.log(1 + ((ν*ζ)/(u(x,t) * r))) - 1.0)) + ((r/ν) * (ν - ((1+ν) * NaNMath.log(1 + ν)) + NaNMath.log(1 + ((ν*ζ)/(u(x,t)*r))))) )^(2.0)) + ψ*sin(θ)
     
-    eq2B = -expand_derivatives(Dx((α * u(x,t)^2.0) * (( (ζ^2 / (u(x,t))^2.0) - ((2.0 * r * ζ)/u(x,t)) + r^2.0) / ( ((ζ/u(x,t))*(NaNMath.log(1 + ((ν*ζ)/(u(x,t) * r))) - 1.0)) + ((r/ν) * (ν - ((1+ν) * NaNMath.log(1 + ν)) + NaNMath.log(1 + ((ν*ζ)/(u(x,t)*r))))) )^(2.0)) - τ_cr)) * (1/α)
+    h1(x,t) = (α * u(x,t)^2.0) * (( (ζ^2 / (u(x,t))^2.0) - ((2.0 * r * ζ)/u(x,t)) + r^2.0) / ( ((ζ/u(x,t))*(NaNMath.log(1 + ((ν*ζ)/(u(x,t) * r))) - 1.0)) + ((r/ν) * (ν - ((1+ν) * NaNMath.log(1 + ν)) + NaNMath.log(1 + ((ν*ζ)/(u(x,t)*r))))) )^(2.0)) - τ_cr
+    h2(x,t) = ifelse(h1(x,t)>0, h1(x,t)^γ, 0.0)
+
+    eq2B = -expand_derivatives(Dx(h2(x,t))) * (1/α)
 
     τ = (α * u(x,t)^2.0) * (( (ζ^2 / (u(x,t))^2) - ((2.0 * r * ζ)/u(x,t)) + r^2.0) / ( ((ζ/u(x,t))*(NaNMath.log(1 + ((ν*ζ)/(u(x,t) * r))) - 1.0)) + ((r/ν) * (ν - ((1+ν) * NaNMath.log(1 + ν)) + NaNMath.log(1 + ((ν*ζ)/(u(x,t)*r))))) )^(2.0))
 
-    f(x,t) = ((τ >= τ_cr) * eq2B)^γ
+    f(x,t) = ((τ >= τ_cr) * eq2B)
+
     eq2 = Dt(η(x,t)) ~ f(x,t)
     
     eq = [eq1, eq2]
 
     # Domain
     x_start = t_start = 0.0
-    x_end = 20.0
+    x_end = domain
     t_end = simtime
     
     domains = [x ∈ IntervalDomain(x_start,x_end), t ∈ IntervalDomain(t_start,t_end)]
@@ -234,12 +250,7 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
                 u(x_start,t) ~ u(x_end,t),
                 u(x,0.0) ~ u0(x,0.0)]
     else
-        #=
-        bcs = [η(x, 0.0) ~ η0(x, 0.0),
-                η(x_start, t) ~ η(x_end, t),
-                u(x_start,t) ~ u(x_end,t),
-                u(x,0.0) ~ u0(x,0.0)]
-        =#
+
         bcs = [
             # Initial conditions for all x at t=0
             η(x, 0.0) ~ η0(x, 0.0),
@@ -247,20 +258,15 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
         
             # Dirichlet at x_start
             u(x_start, t) ~ u_init,
-            #η(x_start, t) ~ 0.0,
         
             # Sommerfeld
-            Dx(u(x_end,t)) ~ (-1/c) * Dx(u(x_end,t)),
-            #Dx(u(x_start,t)) ~ (-1/c) * Dx(u(x_start,t)),
-
-            # Neumann
-            #Dx(η(x_end,t)) ~ 0.0
+            Dx(u(x_end,t)) ~ (-1/c) * Dt(u(x_end,t)),
             ]
     end
     
     @named pdesys = PDESystem(eq, bcs, domains, [x, t], [u(x, t), η(x, t)])
 
-    discretization = MOLFiniteDifference([x => 250], t)
+    discretization = MOLFiniteDifference([x => nodes], t)
 
     prob = discretize(pdesys, discretization);
 
@@ -281,16 +287,20 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
     
     # Create additional columns for time slices and spatial indices
     time_slices = repeat(range(0.0, stop=simtime, length=cols), outer=rows)
-    spatial_indices = repeat(range(0.0, stop=20.0, length=rows), inner=cols)
+    spatial_indices = repeat(range(0.0, stop=domain, length=rows), inner=cols)
     
-    discr = (((A*D)/r_0) .* exp.((-(discx .- Peak1).^2.0)./σ)) .+ (((A*D)/r_0) .* exp.((-(discx .- Peak2).^2.0)./σ)) .+ (k*D/r_0)
+    discr = (((A*D)/r_0) .* exp.((-(discx .- Peak1).^2.0)./(2*σ^2.0))) .+ (((A*D)/r_0) .* exp.((-(discx .- Peak2).^2.0)./(2*σ^2.0))) .+ (k*D/r_0)
     if Peak3 !== nothing
-        discr .+= (((A*D)/r_0) .* exp.((-(discx .- Peak3).^2.0)./σ))
+        discr .+= (((A*D)/r_0) .* exp.((-(discx .- Peak3).^2.0)./(2*σ^2.0)))
+        if Peak4 !== nothing
+            discr .+= (((A*D)/r_0) .* exp.((-(discx .- Peak4).^2.0)./(2*(σ*0.8)^2.0)))
+            if Peak5 !== nothing
+                discr .+= (((A*D)/r_0) .* exp.((-(discx .- Peak5).^2.0)./(2*(σ*0.8)^2.0)))
+            end
+        end
     end
     
     roughness = repeat(discr, inner=cols)
-
-    #τ_values = [Symbolics.value(substitute(τ, Dict(x => i, t => j, u(x, t) => k, η(x,t) => m))) for (i, j, k, m) in zip(spatial_indices, time_slices, discu_vec, discη_vec)]
 
     df = DataFrame(
         t = time_slices,
@@ -298,11 +308,11 @@ function Gaussian_DualPeak_Model(Peak1::Float64, Peak2::Float64, Discharge::Floa
         u = discu_vec,
         η = discη_vec,
         roughness = roughness,
-        #tau = τ_values,
         q = q_w,
         slope = θ,
         r0 = r_0,
         ν = ν,
+        Critical = τ_cr,
         Reference = Reference
         )
 
@@ -325,7 +335,6 @@ function process_simulations(data::DataFrame)
     # Step 1: Create 'Run' as a unique group identifier based on the combination of columns
     data.Run = map(x -> string(x), groupby(data, [:r0, :slope, :q, :Peak1, :Peak2, :Peak3]).groups)
     data.Run = categorical(data.Run)
-    data = filter(row -> 5.0 < row.x < 15.0, data)
 
     # Step 2: Group data by 'Run' and 't' and calculate 'mean_u'
     grouped = groupby(data, [:Run, :t])
