@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15126884.svg)](https://doi.org/10.5281/zenodo.15126884)
+
 # Code for A Roughness-Based Model for Incipient Step-Pool Formation in Alluvial Streams
 Quasi 2D Saint-Venant - Exner equations modeling step-pool morphology formation in steep streams.
 
